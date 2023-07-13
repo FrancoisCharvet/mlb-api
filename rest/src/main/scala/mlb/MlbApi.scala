@@ -3,8 +3,13 @@ package mlb
 import zio._
 import zio.jdbc._
 import zio.http._
-
+import com.github.tototoshi.csv._
 import java.sql.Date
+import zio.stream.ZStream
+import mlb.GameDates.GameDate
+import java.time.LocalDate
+import mlb.SeasonYears.SeasonYear
+import mlb.PlayoffRounds.PlayoffRound
 
 object MlbApi extends ZIOAppDefault {
 
@@ -43,8 +48,24 @@ object MlbApi extends ZIOAppDefault {
       ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
   }.withDefaultErrorResponse
 
+  val columnNames: List[String] = List("date","season", "neutral", "playoff", "team1", "team2", "elo1_pre",
+   "elo2_pre", "elo_prob1", "elo_prob2", "elo1_post", "elo2_post", "rating1_pre", "rating2_pre", "pitcher1",
+   "pitcher2", "pitcher1_rgs", "pitcher2_rgs", "pitcher1_adj", "pitcher2_adj", "rating_prob1", "rating_prob2",
+   "rating1_post", "rating2_post", "score1", "score2")
+
   val appLogic: ZIO[ZConnectionPool & Server, Throwable, Unit] = for {
-    _ <- create *> insertRows
+    conn <- create
+    source <- ZIO.succeed(CSVReader.open("C:/Users/barto/Desktop/EFREI/M1/S8/functional_programming/mlb-elo/mlb-elo/mlb_elo.csv"))
+    stream <- ZStream
+        .fromIterator[Seq[String]](source.iterator)
+        .drop(1)//we delete the first row
+        .foreach(chunk => {
+            val rowMap = columnNames.zip(chunk).toMap //We link the columnNamesList with chunk and convert it to a Map [key: columnName,value: chunkValue]
+            insertRows2(
+            createGame(rowMap("date"), rowMap("season"), rowMap("playoff"), rowMap("team1"), rowMap("team2")))
+        })
+    _ <- ZIO.succeed(source.close())
+  //  _ <- create *> insertRows
     _ <- Server.serve[ZConnectionPool](static ++ endpoints)
   } yield ()
 
@@ -93,9 +114,7 @@ object DataService {
     )
   }
 
-  import GameDates.*
-  import PlayoffRounds.*
-  import SeasonYears.*
+  
   import HomeTeams.*
   import AwayTeams.*
 
@@ -109,7 +128,14 @@ object DataService {
   }
 
   // Should be implemented to replace the `val insertRows` example above. Replace `Any` by the proper case class.
-  def insertRows(games: List[Any]): ZIO[ZConnectionPool, Throwable, UpdateResult] = ???
+  def insertRows2(games: Game): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
+    val rows: List[Game.Row] = List(games.toRow)
+     transaction {
+      insert(
+        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)".values[Game.Row](rows)
+      )
+    }
+  }
 
   val count: ZIO[ZConnectionPool, Throwable, Option[Int]] = transaction {
     selectOne(

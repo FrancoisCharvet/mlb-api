@@ -141,6 +141,10 @@ object Game {
 }
 
 val games: List[Game] = List(
-  Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("ATL"), AwayTeam("NYM")),
-  Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("STL"), AwayTeam("CHC"))
+ // Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("ATL"), AwayTeam("NYM")),
+ // Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("STL"), AwayTeam("CHC"))
 )
+
+def createGame(date: String, season: String, playoff: String, team1: String, team2: String): Game = {
+    Game(GameDate(LocalDate.parse(date)), SeasonYear(Integer.parseInt(season)), None, HomeTeam(team1), AwayTeam(team2))
+}
