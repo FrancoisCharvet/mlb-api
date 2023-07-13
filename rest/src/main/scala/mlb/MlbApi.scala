@@ -23,8 +23,7 @@ object MlbApi extends ZIOAppDefault {
   }.withDefaultErrorResponse
 
   val endpoints: App[ZConnectionPool] = Http.collectZIO[Request] {
-    case Method.GET -> Root / "init" =>
-      ZIO.succeed(Response.text("Not Implemented").withStatus(Status.NotImplemented))
+    case Method.GET -> Root / "init" => init
     case Method.GET -> Root / "game" / "latest" / homeTeam / awayTeam =>
       for {
         game: Option[Game] <- latest(HomeTeam(homeTeam), AwayTeam(awayTeam))
@@ -47,13 +46,20 @@ object MlbApi extends ZIOAppDefault {
         games: List[Game] <- history(HomeTeam(homeTeam))
         res: Response = gamesHistoryResponse(games)
       } yield res
+    case Method.GET -> Root / "games" / "season" / year =>
+      import zio.json.EncoderOps
+      import Game._
+      for {
+        games: List[Game] <- season(SeasonYear(year.toInt))
+        res: Response = gamesSeasonResponse(games)
+      } yield res
     case _ =>
       ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
   }.withDefaultErrorResponse
 
 
   val appLogic: ZIO[ZConnectionPool & Server, Throwable, Unit] = for {
-    conn <- create
+    /*conn <- create
     source <- ZIO.succeed(CSVReader.open(("rest\\src\\data\\mlb_elo.csv")))
     stream <- ZStream
       .fromIterator[Seq[String]](source.iterator)
@@ -72,7 +78,7 @@ object MlbApi extends ZIOAppDefault {
       }
       .grouped(1000)
       .foreach(chunk => insertRows(chunk.toList))
-    _ <- ZIO.succeed(source.close())
+    _ <- ZIO.succeed(source.close())*/
     _ <- Server.serve[ZConnectionPool](static ++ endpoints)
   } yield ()
 
@@ -84,6 +90,7 @@ object ApiService {
 
   import zio.json.EncoderOps
   import Game._
+  
 
   def countResponse(count: Option[Int]): Response = {
     count match
@@ -101,7 +108,10 @@ object ApiService {
   def predictResponse(game: Option[Game]): Response = {
     println(game)
     game match
-      case Some(g) => Response.text(s"${g.eloProb1}").withStatus(Status.Ok)
+      case Some(g) => Response.text(s"${g.homeTeam} has ${g.eloProb1} probability to win according to ELO.\n" +
+      s"${g.awayTeam} has ${g.eloProb2} probability to win according to ELO.\n" +
+      s"${g.homeTeam} has ${g.mlbProb1} probability to win according to MLB.\n" +
+      s"${g.awayTeam} has ${g.mlbProb2} probability to win according to MLB.").withStatus(Status.Ok)
       case None => Response.text("No game found")
   }
 
@@ -110,6 +120,13 @@ object ApiService {
       case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
       case _ => Response.json(games.toJson).withStatus(Status.Ok)
   }
+
+    def gamesSeasonResponse(games: List[Game]): Response = {
+    games match
+      case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
+      case _ => Response.json(games.toJson).withStatus(Status.Ok)
+  }
+
 }
 
 object DataService {
@@ -134,6 +151,32 @@ object DataService {
     )
   }
 
+  def init: ZIO[ZConnectionPool, Throwable, Response] = {
+    val initLogic = for{
+        conn <- create
+        source <- ZIO.succeed(CSVReader.open(("rest\\src\\data\\mlb_elo.csv")))
+        stream <- ZStream
+        .fromIterator[Seq[String]](source.iterator)
+        .drop(1) // drop header row
+        .map { values =>
+            val date = GameDates.GameDate(LocalDate.parse(values(0)))
+            val season = SeasonYears.SeasonYear(values(1).toInt)
+            val playoffRound = PlayoffRounds.PlayoffRound(values(2).toInt)
+            val homeTeam = HomeTeams.HomeTeam(values(4))
+            val awayTeam = AwayTeams.AwayTeam(values(5))
+            val eloProb1 = EloProbs1.EloProb1(values(8).toDouble)
+            val eloProb2 = EloProbs2.EloProb2(values(9).toDouble)
+            val mlbProb1 = MlbProbs1.MlbProb1(values(20).toDouble)
+            val mlbProb2 = MlbProbs2.MlbProb2(values(21).toDouble)
+            Game(date, season, playoffRound, homeTeam, awayTeam, eloProb1, eloProb2, mlbProb1, mlbProb2)
+        }
+        .grouped(1000)
+        .foreach(chunk => insertRows(chunk.toList))
+        _ <- ZIO.succeed(source.close())
+    }yield Response.text("Database initialized")
+
+    initLogic.catchAll(t => ZIO.succeed(Response.text(s"Error initializing database: ${t.getMessage}")))
+  }
 
   import HomeTeams.*
   import AwayTeams.*
@@ -169,6 +212,13 @@ object DataService {
     }
   }
 
+  def season(year: SeasonYear): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+        selectAll(
+            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
+        ).map(_.toList)
+    }
+  }
 
   def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
