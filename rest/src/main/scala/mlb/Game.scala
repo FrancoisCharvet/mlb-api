@@ -100,7 +100,7 @@ import AwayTeams.*
 final case class Game(
     date: GameDate,
     season: SeasonYear,
-    playoffRound: Option[PlayoffRound],
+    playoffRound: PlayoffRound,
     homeTeam: HomeTeam,
     awayTeam: AwayTeam
 )
@@ -111,11 +111,11 @@ object Game {
   implicit val gameEncoder: JsonEncoder[Game] = DeriveJsonEncoder.gen[Game]
   implicit val gameDecoder: JsonDecoder[Game] = DeriveJsonDecoder.gen[Game]
 
-  def unapply(game: Game): (GameDate, SeasonYear, Option[PlayoffRound], HomeTeam, AwayTeam) =
+  def unapply(game: Game): (GameDate, SeasonYear, PlayoffRound, HomeTeam, AwayTeam) =
     (game.date, game.season, game.playoffRound, game.homeTeam, game.awayTeam)
 
   // a custom decoder from a tuple
-  type Row = (String, Int, Option[Int], String, String)
+  type Row = (String, Int, Int, String, String)
 
   extension (g:Game)
     def toRow: Row =
@@ -123,7 +123,7 @@ object Game {
       (
         GameDate.unapply(d).toString,
         SeasonYear.unapply(y),
-        p.map(PlayoffRound.unapply),
+        PlayoffRound.unapply(p),
         HomeTeam.unapply(h),
         AwayTeam.unapply(a)
       )
@@ -133,7 +133,7 @@ object Game {
       Game(
         GameDate(LocalDate.parse(date)),
         SeasonYear(season),
-        maybePlayoff.map(PlayoffRound(_)),
+        PlayoffRound(maybePlayoff),
         HomeTeam(home),
         AwayTeam(away)
       )
@@ -141,10 +141,6 @@ object Game {
 }
 
 val games: List[Game] = List(
- // Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("ATL"), AwayTeam("NYM")),
- // Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), None, HomeTeam("STL"), AwayTeam("CHC"))
+ Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), PlayoffRound(0), HomeTeam("ATL"), AwayTeam("NYM")),
+ Game(GameDate(LocalDate.parse("2021-10-03")), SeasonYear(2023), PlayoffRound(0), HomeTeam("STL"), AwayTeam("CHC"))
 )
-
-def createGame(date: String, season: String, playoff: String, team1: String, team2: String): Game = {
-    Game(GameDate(LocalDate.parse(date)), SeasonYear(Integer.parseInt(season)), None, HomeTeam(team1), AwayTeam(team2))
-}
