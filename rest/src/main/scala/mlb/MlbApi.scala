@@ -41,8 +41,11 @@ object MlbApi extends ZIOAppDefault {
     case Method.GET -> Root / "games" / "history" / homeTeam =>
       import zio.json.EncoderOps
       import Game._
-      // FIXME: implement correct database request
-      ZIO.succeed(Response.json(games.toJson).withStatus(Status.Ok))
+      for {
+        games: List[Game] <- history(HomeTeam(homeTeam))
+        res: Response = gamesHistoryResponse(games)
+      } yield res
+      // ZIO.succeed(Response.json(games.toJson).withStatus(Status.Ok))
     case _ =>
       ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
   }.withDefaultErrorResponse
@@ -88,6 +91,12 @@ object ApiService {
     game match
       case Some(g) => Response.json(g.toJson).withStatus(Status.Ok)
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
+  }
+
+  def gamesHistoryResponse(games: List[Game]): Response = {
+    games match
+      case Nil => Response.text("No game found in historical data").withStatus(Status.NotFound)
+      case _ => Response.json(games.toJson).withStatus(Status.Ok)
   }
 }
 
@@ -137,6 +146,14 @@ object DataService {
       selectOne(
         sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1".as[Game]
       )
+    }
+  }
+
+  def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+      selectAll(
+        sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
+      ).map(_.toList)
     }
   }
 }
