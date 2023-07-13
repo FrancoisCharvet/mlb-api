@@ -31,8 +31,10 @@ object MlbApi extends ZIOAppDefault {
         res: Response = latestGameResponse(game)
       } yield res
     case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-      // FIXME : implement correct logic and response
-      ZIO.succeed(Response.text(s"$homeTeam vs $awayTeam win probability: 0.0"))
+      for {
+        game: Option[Game] <- predict(HomeTeam(homeTeam), AwayTeam(awayTeam))
+        res: Response = predictResponse(game)
+      } yield res
     case Method.GET -> Root / "games" / "count" =>
       for {
         count: Option[Int] <- count
@@ -45,7 +47,6 @@ object MlbApi extends ZIOAppDefault {
         games: List[Game] <- history(HomeTeam(homeTeam))
         res: Response = gamesHistoryResponse(games)
       } yield res
-      // ZIO.succeed(Response.json(games.toJson).withStatus(Status.Ok))
     case _ =>
       ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
   }.withDefaultErrorResponse
@@ -63,7 +64,11 @@ object MlbApi extends ZIOAppDefault {
         val playoffRound = PlayoffRounds.PlayoffRound(values(2).toInt)
         val homeTeam = HomeTeams.HomeTeam(values(4))
         val awayTeam = AwayTeams.AwayTeam(values(5))
-        Game(date, season, playoffRound, homeTeam, awayTeam)
+        val eloProb1 = EloProbs1.EloProb1(values(8).toDouble)
+        val eloProb2 = EloProbs2.EloProb2(values(9).toDouble)
+        val mlbProb1 = MlbProbs1.MlbProb1(values(20).toDouble)
+        val mlbProb2 = MlbProbs2.MlbProb2(values(21).toDouble)
+        Game(date, season, playoffRound, homeTeam, awayTeam, eloProb1, eloProb2, mlbProb1, mlbProb2)
       }
       .grouped(1000)
       .foreach(chunk => insertRows(chunk.toList))
@@ -93,9 +98,16 @@ object ApiService {
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
   }
 
+  def predictResponse(game: Option[Game]): Response = {
+    println(game)
+    game match
+      case Some(g) => Response.text(s"${g.eloProb1}").withStatus(Status.Ok)
+      case None => Response.text("No game found")
+  }
+
   def gamesHistoryResponse(games: List[Game]): Response = {
     games match
-      case Nil => Response.text("No game found in historical data").withStatus(Status.NotFound)
+      case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
       case _ => Response.json(games.toJson).withStatus(Status.Ok)
   }
 }
@@ -118,7 +130,7 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3))"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo_prob1 DOUBLE, elo_prob2 DOUBLE, mlb_prob1 DOUBLE, mlb_prob2 DOUBLE)"
     )
   }
 
@@ -130,7 +142,7 @@ object DataService {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)".values[Game.Row](rows)
+        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2)".values[Game.Row](rows)
       )
     }
   }
@@ -149,10 +161,19 @@ object DataService {
     }
   }
 
+  def predict(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
+    transaction {
+      selectOne(
+        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Game]
+      )
+    }
+  }
+
+
   def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
       selectAll(
-        sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
+        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
       ).map(_.toList)
     }
   }
