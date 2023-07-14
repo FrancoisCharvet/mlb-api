@@ -9,6 +9,9 @@ import mlb.GameDates.GameDate
 import java.time.LocalDate
 import mlb.SeasonYears.SeasonYear
 import mlb.PlayoffRounds.PlayoffRound
+import mlb.HomeTeams.HomeTeam
+import mlb.AwayTeams.AwayTeam
+import mlb.DataService.getEloRatings
 
 object MlbApi extends ZIOAppDefault {
 
@@ -29,11 +32,12 @@ object MlbApi extends ZIOAppDefault {
         game: Option[Game] <- latest(HomeTeam(homeTeam), AwayTeam(awayTeam))
         res: Response = latestGameResponse(game)
       } yield res
-    case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-      for {
-        game: Option[Game] <- predict(HomeTeam(homeTeam), AwayTeam(awayTeam))
-        res: Response = predictResponse(game)
-      } yield res
+   case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
+    predictNextMatch(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { eloPrediction =>
+        predictResponse(HomeTeam(homeTeam), AwayTeam(awayTeam), eloPrediction).map { response =>
+        response
+        }
+    }    
     case Method.GET -> Root / "games" / "count" =>
       for {
         count: Option[Int] <- count
@@ -105,15 +109,25 @@ object ApiService {
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
   }
 
-  def predictResponse(game: Option[Game]): Response = {
-    println(game)
-    game match
-      case Some(g) => Response.text(s"${g.homeTeam} has ${g.eloProb1} probability to win according to ELO.\n" +
-      s"${g.awayTeam} has ${g.eloProb2} probability to win according to ELO.\n" +
-      s"${g.homeTeam} has ${g.mlbProb1} probability to win according to MLB.\n" +
-      s"${g.awayTeam} has ${g.mlbProb2} probability to win according to MLB.").withStatus(Status.Ok)
-      case None => Response.text("No game found")
+  def predictNextMatch(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Double] = {
+    getEloRatings(homeTeam, awayTeam).map { case (homeElo, awayElo) =>
+        val eloDifference = homeElo - awayElo
+        val winProbability = 1.0 / (1.0 + math.pow(10.0, eloDifference / 400.0))
+        winProbability
+    }
   }
+  
+
+  def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
+    predictNextMatch(homeTeam, awayTeam).flatMap {
+    case eloPrediction if eloPrediction >= 0 =>
+      ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100}% probability to win according to ELO.").withStatus(Status.Ok))
+    case _ =>
+      ZIO.succeed(Response.text("Failed to predict the match.").withStatus(Status.NotFound))
+  }
+
+  }
+
 
   def gamesHistoryResponse(games: List[Game]): Response = {
     games match
@@ -209,6 +223,15 @@ object DataService {
       selectOne(
         sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Game]
       )
+    }
+  }
+
+  def getEloRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    transaction {
+        for {
+        homeElo <- selectOne(sql"SELECT elo_prob1 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        awayElo <- selectOne(sql"SELECT elo_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        } yield (homeElo, awayElo)
     }
   }
 
