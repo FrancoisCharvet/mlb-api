@@ -12,6 +12,7 @@ import mlb.PlayoffRounds.PlayoffRound
 import mlb.HomeTeams.HomeTeam
 import mlb.AwayTeams.AwayTeam
 import mlb.DataService.getEloRatings
+import mlb.DataService.getMlbRatings
 
 object MlbApi extends ZIOAppDefault {
 
@@ -33,8 +34,8 @@ object MlbApi extends ZIOAppDefault {
         res: Response = latestGameResponse(game)
       } yield res
    case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-    predictNextMatch(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { eloPrediction =>
-        predictResponse(HomeTeam(homeTeam), AwayTeam(awayTeam), eloPrediction).map { response =>
+    predictNextMatch(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { (eloPrediction,mlbPrediction) =>
+        predictResponse(HomeTeam(homeTeam), AwayTeam(awayTeam), eloPrediction, mlbPrediction).map { response =>
         response
         }
     }    
@@ -89,19 +90,28 @@ object ApiService {
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
   }
 
-  def predictNextMatch(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Double] = {
-    getEloRatings(homeTeam, awayTeam).map { case (homeElo, awayElo) =>
+  def predictNextMatch(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    for {
+        eloRatings <- getEloRatings(homeTeam, awayTeam)
+        mlbRatings <- getMlbRatings(homeTeam, awayTeam)
+    } yield {
+        val (homeElo, awayElo) = eloRatings
+        val (homeMlb, awayMlb) = mlbRatings
+
         val eloDifference = homeElo - awayElo
-        val winProbability = 1.0 / (1.0 + math.pow(10.0, eloDifference / 400.0))
-        winProbability
+        val mlbDifference = homeMlb - awayMlb
+
+        val winProbabilityElo = 1.0 / (1.0 + math.pow(10.0, eloDifference / 400.0))
+        val winProbabilityMlb = 1.0 / (1.0 + math.pow(10.0, mlbDifference / 400.0))
+
+        (winProbabilityElo, winProbabilityMlb)
     }
   }
-  
 
-  def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
+  def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double, mlbPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
     predictNextMatch(homeTeam, awayTeam).flatMap {
-        case eloPrediction if eloPrediction >= 0 =>
-        ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100}% probability to win according to ELO.").withStatus(Status.Ok))
+        case (eloPrediction,mlbPrediction) if eloPrediction >= 0 && mlbPrediction >= 0 =>
+        ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100} % probability to win according to ELO.\n${homeTeam} has ${mlbPrediction * 100} % probability to win according to MLB.").withStatus(Status.Ok))
         case _ =>
         ZIO.succeed(Response.text("Failed to predict the match.").withStatus(Status.NotFound))
     }
@@ -141,7 +151,7 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo1_pre DOUBLE, elo2_pre DOUBLE, mlb_prob1 DOUBLE, mlb_prob2 DOUBLE)"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo1_pre DOUBLE, elo2_pre DOUBLE,  rating1_pre DOUBLE, rating2_pre DOUBLE)"
     )
   }
 
@@ -160,9 +170,9 @@ object DataService {
             val awayTeam = AwayTeams.AwayTeam(values(5))
             val eloPre1 = EloPres1.EloPre1(values(6).toDouble)
             val eloPre2 = EloPres2.EloPre2(values(7).toDouble)
-            val mlbProb1 = MlbProbs1.MlbProb1(values(20).toDouble)
-            val mlbProb2 = MlbProbs2.MlbProb2(values(21).toDouble)
-            Game(date, season, playoffRound, homeTeam, awayTeam, eloPre1, eloPre2, mlbProb1, mlbProb2)
+            val mlbPre1 = MlbPres1.MlbPre1(values(12).toDouble)
+            val mlbPre2 = MlbPres2.MlbPre2(values(13).toDouble)
+            Game(date, season, playoffRound, homeTeam, awayTeam, eloPre1, eloPre2, mlbPre1, mlbPre2)
         }
         .grouped(1000)
         .foreach(chunk => insertRows(chunk.toList))
@@ -179,7 +189,7 @@ object DataService {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2)".values[Game.Row](rows)
+        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre)".values[Game.Row](rows)
       )
     }
   }
@@ -193,7 +203,7 @@ object DataService {
   def latest(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
     transaction {
       selectOne(
-        sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1".as[Game]
+        sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1".as[Game]
       )
     }
   }
@@ -207,11 +217,19 @@ object DataService {
     }
   }
 
+  def getMlbRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    transaction {
+        for {
+        homeElo <- selectOne(sql"SELECT rating1_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        awayElo <- selectOne(sql"SELECT rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        } yield (homeElo, awayElo)
+    }
+  }
 
   def season(year: SeasonYear): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
         selectAll(
-            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2 FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
+            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
         ).map(_.toList)
     }
   }
@@ -219,7 +237,7 @@ object DataService {
   def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
       selectAll(
-        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
+        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
       ).map(_.toList)
     }
   }

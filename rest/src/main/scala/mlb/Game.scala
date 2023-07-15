@@ -52,32 +52,32 @@ object EloPres2{
 }
 
 
-object MlbProbs1{
-  opaque type MlbProb1 = Double
-  object MlbProb1 {
+object MlbPres1{
+  opaque type MlbPre1 = Double
+  object MlbPre1 {
 
-    def apply(value: Double): MlbProb1 = value
+    def apply(value: Double): MlbPre1 = value
 
-    def unapply(mlbProb1: MlbProb1): Double = mlbProb1
+    def unapply(mlbPre1: MlbPre1): Double = mlbPre1
   }
 
-  given CanEqual[MlbProb1, MlbProb1] = CanEqual.derived
-  implicit val mlbProb1Encoder: JsonEncoder[MlbProb1] = JsonEncoder.double
-  implicit val mlbProb1Decoder: JsonDecoder[MlbProb1] = JsonDecoder.double
+  given CanEqual[MlbPre1, MlbPre1] = CanEqual.derived
+  implicit val mlbPre1Encoder: JsonEncoder[MlbPre1] = JsonEncoder.double
+  implicit val mlbPre1Decoder: JsonDecoder[MlbPre1] = JsonDecoder.double
 }
 
-object MlbProbs2{
-  opaque type MlbProb2 = Double
-  object MlbProb2 {
+object MlbPres2{
+  opaque type MlbPre2 = Double
+  object MlbPre2 {
 
-    def apply(value: Double): MlbProb2 = value
+    def apply(value: Double): MlbPre2 = value
 
-    def unapply(mlbProb2: MlbProb2): Double = mlbProb2
+    def unapply(mlbPre2: MlbPre2): Double = mlbPre2
   }
 
-  given CanEqual[MlbProb2, MlbProb2] = CanEqual.derived
-  implicit val mlbProb2Encoder: JsonEncoder[MlbProb2] = JsonEncoder.double
-  implicit val mlbProb2Decoder: JsonDecoder[MlbProb2] = JsonDecoder.double
+  given CanEqual[MlbPre2, MlbPre2] = CanEqual.derived
+  implicit val mlbPre2Encoder: JsonEncoder[MlbPre2] = JsonEncoder.double
+  implicit val mlbPre2Decoder: JsonDecoder[MlbPre2] = JsonDecoder.double
 }
 object AwayTeams {
 
@@ -157,8 +157,8 @@ import HomeTeams.*
 import AwayTeams.*
 import EloPres1.*
 import EloPres2.*
-import MlbProbs1.*
-import MlbProbs2.*
+import MlbPres1.*
+import MlbPres2.*
 
 final case class Game(
                        date: GameDate,
@@ -168,8 +168,8 @@ final case class Game(
                        awayTeam: AwayTeam,
                        eloPre1: EloPre1,
                        eloPre2: EloPre2,
-                       mlbProb1: MlbProb1,
-                       mlbProb2: MlbProb2
+                       mlbPre1: MlbPre1,
+                       mlbPre2: MlbPre2
 
                      )
 
@@ -179,8 +179,8 @@ object Game {
   implicit val gameEncoder: JsonEncoder[Game] = DeriveJsonEncoder.gen[Game]
   implicit val gameDecoder: JsonDecoder[Game] = DeriveJsonDecoder.gen[Game]
 
-  def unapply(game: Game): (GameDate, SeasonYear, PlayoffRound, HomeTeam, AwayTeam, EloPre1, EloPre2, MlbProb1, MlbProb2) =
-    (game.date, game.season, game.playoffRound, game.homeTeam, game.awayTeam, game.eloPre1, game.eloPre2, game.mlbProb1, game.mlbProb2)
+  def unapply(game: Game): (GameDate, SeasonYear, PlayoffRound, HomeTeam, AwayTeam, EloPre1, EloPre2, MlbPre1, MlbPre2) =
+    (game.date, game.season, game.playoffRound, game.homeTeam, game.awayTeam, game.eloPre1, game.eloPre2, game.mlbPre1, game.mlbPre2)
 
   // a custom decoder from a tuple
   type Row = (String, Int, Int, String, String, Double, Double, Double, Double)
@@ -196,12 +196,12 @@ object Game {
         AwayTeam.unapply(a),
         EloPre1.unapply(e1),
         EloPre2.unapply(e2),
-        MlbProb1.unapply(m1),
-        MlbProb2.unapply(m2)
+        MlbPre1.unapply(m1),
+        MlbPre2.unapply(m2)
       )
 
   implicit val jdbcDecoder: JdbcDecoder[Game] = JdbcDecoder[Row]().map[Game] { t =>
-    val (date, season, maybePlayoff, home, away, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2) = t
+    val (date, season, maybePlayoff, home, away, elo1_pre, elo2_pre, rating1_pre, rating2_pre) = t
     Game(
       GameDate(LocalDate.parse(date)),
       SeasonYear(season),
@@ -210,8 +210,8 @@ object Game {
       AwayTeam(away),
       EloPre1(elo1_pre),
       EloPre2(elo2_pre),
-      MlbProb1(mlb_prob1),
-      MlbProb2(mlb_prob2)
+      MlbPre1(rating1_pre),
+      MlbPre2(rating2_pre)
     )
   }
 }
