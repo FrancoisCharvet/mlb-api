@@ -21,34 +21,34 @@ object HomeTeams {
   implicit val homeTeamDecoder: JsonDecoder[HomeTeam] = JsonDecoder.string
 }
 
-object EloProbs1{
-  opaque type EloProb1 = Double
+object EloPres1{
+  opaque type EloPre1 = Double
 
-  object EloProb1 {
+  object EloPre1 {
 
-    def apply(value: Double): EloProb1 = value
+    def apply(value: Double): EloPre1 = value
 
-    def unapply(eloProb1: EloProb1): Double = eloProb1
+    def unapply(eloPre1: EloPre1): Double = eloPre1
   }
 
-  given CanEqual[EloProb1, EloProb1] = CanEqual.derived
-  implicit val eloProb1Encoder: JsonEncoder[EloProb1] = JsonEncoder.double
-  implicit val eloProb1Decoder: JsonDecoder[EloProb1] = JsonDecoder.double
+  given CanEqual[EloPre1, EloPre1] = CanEqual.derived
+  implicit val eloPre1Encoder: JsonEncoder[EloPre1] = JsonEncoder.double
+  implicit val eloPre1Decoder: JsonDecoder[EloPre1] = JsonDecoder.double
 }
 
 
-object EloProbs2{
-  opaque type EloProb2 = Double
-  object EloProb2 {
+object EloPres2{
+  opaque type EloPre2 = Double
+  object EloPre2 {
 
-    def apply(value: Double): EloProb2 = value
+    def apply(value: Double): EloPre2 = value
 
-    def unapply(eloProb2: EloProb2): Double = eloProb2
+    def unapply(eloPre2: EloPre2): Double = eloPre2
   }
 
-  given CanEqual[EloProb2, EloProb2] = CanEqual.derived
-  implicit val eloProb2Encoder: JsonEncoder[EloProb2] = JsonEncoder.double
-  implicit val eloProb2Decoder: JsonDecoder[EloProb2] = JsonDecoder.double
+  given CanEqual[EloPre2, EloPre2] = CanEqual.derived
+  implicit val eloPre2Encoder: JsonEncoder[EloPre2] = JsonEncoder.double
+  implicit val eloPre2Decoder: JsonDecoder[EloPre2] = JsonDecoder.double
 }
 
 
@@ -155,8 +155,8 @@ import PlayoffRounds.*
 import SeasonYears.*
 import HomeTeams.*
 import AwayTeams.*
-import EloProbs1.*
-import EloProbs2.*
+import EloPres1.*
+import EloPres2.*
 import MlbProbs1.*
 import MlbProbs2.*
 
@@ -166,8 +166,8 @@ final case class Game(
                        playoffRound: PlayoffRound,
                        homeTeam: HomeTeam,
                        awayTeam: AwayTeam,
-                       eloProb1: EloProb1,
-                       eloProb2: EloProb2,
+                       eloPre1: EloPre1,
+                       eloPre2: EloPre2,
                        mlbProb1: MlbProb1,
                        mlbProb2: MlbProb2
 
@@ -179,8 +179,8 @@ object Game {
   implicit val gameEncoder: JsonEncoder[Game] = DeriveJsonEncoder.gen[Game]
   implicit val gameDecoder: JsonDecoder[Game] = DeriveJsonDecoder.gen[Game]
 
-  def unapply(game: Game): (GameDate, SeasonYear, PlayoffRound, HomeTeam, AwayTeam, EloProb1, EloProb2, MlbProb1, MlbProb2) =
-    (game.date, game.season, game.playoffRound, game.homeTeam, game.awayTeam, game.eloProb1, game.eloProb2, game.mlbProb1, game.mlbProb2)
+  def unapply(game: Game): (GameDate, SeasonYear, PlayoffRound, HomeTeam, AwayTeam, EloPre1, EloPre2, MlbProb1, MlbProb2) =
+    (game.date, game.season, game.playoffRound, game.homeTeam, game.awayTeam, game.eloPre1, game.eloPre2, game.mlbProb1, game.mlbProb2)
 
   // a custom decoder from a tuple
   type Row = (String, Int, Int, String, String, Double, Double, Double, Double)
@@ -194,22 +194,22 @@ object Game {
         PlayoffRound.unapply(p),
         HomeTeam.unapply(h),
         AwayTeam.unapply(a),
-        EloProb1.unapply(e1),
-        EloProb2.unapply(e2),
+        EloPre1.unapply(e1),
+        EloPre2.unapply(e2),
         MlbProb1.unapply(m1),
         MlbProb2.unapply(m2)
       )
 
   implicit val jdbcDecoder: JdbcDecoder[Game] = JdbcDecoder[Row]().map[Game] { t =>
-    val (date, season, maybePlayoff, home, away, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2) = t
+    val (date, season, maybePlayoff, home, away, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2) = t
     Game(
       GameDate(LocalDate.parse(date)),
       SeasonYear(season),
       PlayoffRound(maybePlayoff),
       HomeTeam(home),
       AwayTeam(away),
-      EloProb1(elo_prob1),
-      EloProb2(elo_prob2),
+      EloPre1(elo1_pre),
+      EloPre2(elo2_pre),
       MlbProb1(mlb_prob1),
       MlbProb2(mlb_prob2)
     )

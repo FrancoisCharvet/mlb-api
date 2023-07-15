@@ -63,26 +63,6 @@ object MlbApi extends ZIOAppDefault {
 
 
   val appLogic: ZIO[ZConnectionPool & Server, Throwable, Unit] = for {
-    /*conn <- create
-    source <- ZIO.succeed(CSVReader.open(("rest\\src\\data\\mlb_elo.csv")))
-    stream <- ZStream
-      .fromIterator[Seq[String]](source.iterator)
-      .drop(1) // drop header row
-      .map { values =>
-        val date = GameDates.GameDate(LocalDate.parse(values(0)))
-        val season = SeasonYears.SeasonYear(values(1).toInt)
-        val playoffRound = PlayoffRounds.PlayoffRound(values(2).toInt)
-        val homeTeam = HomeTeams.HomeTeam(values(4))
-        val awayTeam = AwayTeams.AwayTeam(values(5))
-        val eloProb1 = EloProbs1.EloProb1(values(8).toDouble)
-        val eloProb2 = EloProbs2.EloProb2(values(9).toDouble)
-        val mlbProb1 = MlbProbs1.MlbProb1(values(20).toDouble)
-        val mlbProb2 = MlbProbs2.MlbProb2(values(21).toDouble)
-        Game(date, season, playoffRound, homeTeam, awayTeam, eloProb1, eloProb2, mlbProb1, mlbProb2)
-      }
-      .grouped(1000)
-      .foreach(chunk => insertRows(chunk.toList))
-    _ <- ZIO.succeed(source.close())*/
     _ <- Server.serve[ZConnectionPool](static ++ endpoints)
   } yield ()
 
@@ -120,11 +100,11 @@ object ApiService {
 
   def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
     predictNextMatch(homeTeam, awayTeam).flatMap {
-    case eloPrediction if eloPrediction >= 0 =>
-      ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100}% probability to win according to ELO.").withStatus(Status.Ok))
-    case _ =>
-      ZIO.succeed(Response.text("Failed to predict the match.").withStatus(Status.NotFound))
-  }
+        case eloPrediction if eloPrediction >= 0 =>
+        ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100}% probability to win according to ELO.").withStatus(Status.Ok))
+        case _ =>
+        ZIO.succeed(Response.text("Failed to predict the match.").withStatus(Status.NotFound))
+    }
 
   }
 
@@ -161,7 +141,7 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo_prob1 DOUBLE, elo_prob2 DOUBLE, mlb_prob1 DOUBLE, mlb_prob2 DOUBLE)"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo1_pre DOUBLE, elo2_pre DOUBLE, mlb_prob1 DOUBLE, mlb_prob2 DOUBLE)"
     )
   }
 
@@ -178,11 +158,11 @@ object DataService {
             val playoffRound = PlayoffRounds.PlayoffRound(values(2).toInt)
             val homeTeam = HomeTeams.HomeTeam(values(4))
             val awayTeam = AwayTeams.AwayTeam(values(5))
-            val eloProb1 = EloProbs1.EloProb1(values(8).toDouble)
-            val eloProb2 = EloProbs2.EloProb2(values(9).toDouble)
+            val eloPre1 = EloPres1.EloPre1(values(6).toDouble)
+            val eloPre2 = EloPres2.EloPre2(values(7).toDouble)
             val mlbProb1 = MlbProbs1.MlbProb1(values(20).toDouble)
             val mlbProb2 = MlbProbs2.MlbProb2(values(21).toDouble)
-            Game(date, season, playoffRound, homeTeam, awayTeam, eloProb1, eloProb2, mlbProb1, mlbProb2)
+            Game(date, season, playoffRound, homeTeam, awayTeam, eloPre1, eloPre2, mlbProb1, mlbProb2)
         }
         .grouped(1000)
         .foreach(chunk => insertRows(chunk.toList))
@@ -199,7 +179,7 @@ object DataService {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2)".values[Game.Row](rows)
+        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2)".values[Game.Row](rows)
       )
     }
   }
@@ -218,27 +198,20 @@ object DataService {
     }
   }
 
-  def predict(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
-    transaction {
-      selectOne(
-        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Game]
-      )
-    }
-  }
-
   def getEloRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
     transaction {
         for {
-        homeElo <- selectOne(sql"SELECT elo_prob1 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
-        awayElo <- selectOne(sql"SELECT elo_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        homeElo <- selectOne(sql"SELECT elo1_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        awayElo <- selectOne(sql"SELECT elo2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
         } yield (homeElo, awayElo)
     }
   }
 
+
   def season(year: SeasonYear): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
         selectAll(
-            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
+            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2 FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
         ).map(_.toList)
     }
   }
@@ -246,7 +219,7 @@ object DataService {
   def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
       selectAll(
-        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo_prob1, elo_prob2, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
+        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, mlb_prob1, mlb_prob2 FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
       ).map(_.toList)
     }
   }
