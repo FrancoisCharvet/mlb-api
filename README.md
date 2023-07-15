@@ -72,8 +72,13 @@ The MlbApi handles various error scenarios using ZIO's error handling capabiliti
 
 ## Libraries Used
 The MlbApi uses the following external libraries:
+
 zio - Provides the core functionality for effectful programming, error handling, and console interaction.
+
 zio-jdbc - ZIO integration for JDBC, providing a type-safe and composable way to work with relational databases in a purely functional manner.
+
 zio-streams - Functional streaming library built on top of ZIO. It provides a composable and high-performance stream processing API that allows you to process and transform large streams of data in a purely functional way.
+
 zio-http - A type-safe and purely functional HTTP client and server library based on ZIO
+
 tototoshi/scala-csv - https://github.com/tototoshi/scala-csv - To process CSV
