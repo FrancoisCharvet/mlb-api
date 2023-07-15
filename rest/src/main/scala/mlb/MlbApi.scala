@@ -4,12 +4,15 @@ import zio._
 import zio.jdbc._
 import zio.http._
 import com.github.tototoshi.csv._
-import java.sql.Date
 import zio.stream.ZStream
 import mlb.GameDates.GameDate
 import java.time.LocalDate
 import mlb.SeasonYears.SeasonYear
 import mlb.PlayoffRounds.PlayoffRound
+import mlb.HomeTeams.HomeTeam
+import mlb.AwayTeams.AwayTeam
+import mlb.DataService.getEloRatings
+import mlb.DataService.getMlbRatings
 
 object MlbApi extends ZIOAppDefault {
 
@@ -24,16 +27,18 @@ object MlbApi extends ZIOAppDefault {
   }.withDefaultErrorResponse
 
   val endpoints: App[ZConnectionPool] = Http.collectZIO[Request] {
-    case Method.GET -> Root / "init" =>
-      ZIO.succeed(Response.text("Not Implemented").withStatus(Status.NotImplemented))
+    case Method.GET -> Root / "init" => init
     case Method.GET -> Root / "game" / "latest" / homeTeam / awayTeam =>
       for {
         game: Option[Game] <- latest(HomeTeam(homeTeam), AwayTeam(awayTeam))
         res: Response = latestGameResponse(game)
       } yield res
-    case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-      // FIXME : implement correct logic and response
-      ZIO.succeed(Response.text(s"$homeTeam vs $awayTeam win probability: 0.0"))
+   case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
+    predictNextMatch(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { (eloPrediction,mlbPrediction) =>
+        predictResponse(HomeTeam(homeTeam), AwayTeam(awayTeam), eloPrediction, mlbPrediction).map { response =>
+        response
+        }
+    }    
     case Method.GET -> Root / "games" / "count" =>
       for {
         count: Option[Int] <- count
@@ -42,30 +47,23 @@ object MlbApi extends ZIOAppDefault {
     case Method.GET -> Root / "games" / "history" / homeTeam =>
       import zio.json.EncoderOps
       import Game._
-      // FIXME: implement correct database request
-      ZIO.succeed(Response.json(games.toJson).withStatus(Status.Ok))
+      for {
+        games: List[Game] <- history(HomeTeam(homeTeam))
+        res: Response = gamesHistoryResponse(games)
+      } yield res
+    case Method.GET -> Root / "games" / "season" / year =>
+      import zio.json.EncoderOps
+      import Game._
+      for {
+        games: List[Game] <- season(SeasonYear(year.toInt))
+        res: Response = gamesSeasonResponse(games)
+      } yield res
     case _ =>
       ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
   }.withDefaultErrorResponse
 
-  val columnNames: List[String] = List("date","season", "neutral", "playoff", "team1", "team2", "elo1_pre",
-   "elo2_pre", "elo_prob1", "elo_prob2", "elo1_post", "elo2_post", "rating1_pre", "rating2_pre", "pitcher1",
-   "pitcher2", "pitcher1_rgs", "pitcher2_rgs", "pitcher1_adj", "pitcher2_adj", "rating_prob1", "rating_prob2",
-   "rating1_post", "rating2_post", "score1", "score2")
 
   val appLogic: ZIO[ZConnectionPool & Server, Throwable, Unit] = for {
-    conn <- create
-    source <- ZIO.succeed(CSVReader.open("C:/Users/barto/Desktop/EFREI/M1/S8/functional_programming/mlb-elo/mlb-elo/mlb_elo.csv"))
-    stream <- ZStream
-        .fromIterator[Seq[String]](source.iterator)
-        .drop(1)//we delete the first row
-        .foreach(chunk => {
-            val rowMap = columnNames.zip(chunk).toMap //We link the columnNamesList with chunk and convert it to a Map [key: columnName,value: chunkValue]
-            insertRows2(
-            createGame(rowMap("date"), rowMap("season"), rowMap("playoff"), rowMap("team1"), rowMap("team2")))
-        })
-    _ <- ZIO.succeed(source.close())
-  //  _ <- create *> insertRows
     _ <- Server.serve[ZConnectionPool](static ++ endpoints)
   } yield ()
 
@@ -77,6 +75,7 @@ object ApiService {
 
   import zio.json.EncoderOps
   import Game._
+  
 
   def countResponse(count: Option[Int]): Response = {
     count match
@@ -90,6 +89,48 @@ object ApiService {
       case Some(g) => Response.json(g.toJson).withStatus(Status.Ok)
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
   }
+
+  def predictNextMatch(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    for {
+        eloRatings <- getEloRatings(homeTeam, awayTeam)
+        mlbRatings <- getMlbRatings(homeTeam, awayTeam)
+    } yield {
+        val (homeElo, awayElo) = eloRatings
+        val (homeMlb, awayMlb) = mlbRatings
+
+        val eloDifference = homeElo - awayElo
+        val mlbDifference = homeMlb - awayMlb
+
+        val winProbabilityElo = 1.0 / (1.0 + math.pow(10.0, eloDifference / 400.0))
+        val winProbabilityMlb = 1.0 / (1.0 + math.pow(10.0, mlbDifference / 400.0))
+
+        (winProbabilityElo, winProbabilityMlb)
+    }
+  }
+
+  def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double, mlbPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
+    predictNextMatch(homeTeam, awayTeam).flatMap {
+        case (eloPrediction,mlbPrediction) if eloPrediction >= 0 && mlbPrediction >= 0 =>
+        ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100} % probability to win according to ELO.\n${homeTeam} has ${mlbPrediction * 100} % probability to win according to MLB.").withStatus(Status.Ok))
+        case _ =>
+        ZIO.succeed(Response.text("Failed to predict the match.").withStatus(Status.NotFound))
+    }
+
+  }
+
+
+  def gamesHistoryResponse(games: List[Game]): Response = {
+    games match
+      case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
+      case _ => Response.json(games.toJson).withStatus(Status.Ok)
+  }
+
+    def gamesSeasonResponse(games: List[Game]): Response = {
+    games match
+      case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
+      case _ => Response.json(games.toJson).withStatus(Status.Ok)
+  }
+
 }
 
 object DataService {
@@ -110,29 +151,45 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3))"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3), elo1_pre DOUBLE, elo2_pre DOUBLE,  rating1_pre DOUBLE, rating2_pre DOUBLE)"
     )
   }
 
-  
+  def init: ZIO[ZConnectionPool, Throwable, Response] = {
+    val initLogic = for{
+        conn <- create
+        source <- ZIO.succeed(CSVReader.open(("rest\\src\\data\\mlb_elo.csv")))
+        stream <- ZStream
+        .fromIterator[Seq[String]](source.iterator)
+        .drop(1) // drop header row
+        .map { values =>
+            val date = GameDates.GameDate(LocalDate.parse(values(0)))
+            val season = SeasonYears.SeasonYear(values(1).toInt)
+            val playoffRound = PlayoffRounds.PlayoffRound(values(2).toInt)
+            val homeTeam = HomeTeams.HomeTeam(values(4))
+            val awayTeam = AwayTeams.AwayTeam(values(5))
+            val eloPre1 = EloPres1.EloPre1(values(6).toDouble)
+            val eloPre2 = EloPres2.EloPre2(values(7).toDouble)
+            val mlbPre1 = MlbPres1.MlbPre1(values(12).toDouble)
+            val mlbPre2 = MlbPres2.MlbPre2(values(13).toDouble)
+            Game(date, season, playoffRound, homeTeam, awayTeam, eloPre1, eloPre2, mlbPre1, mlbPre2)
+        }
+        .grouped(1000)
+        .foreach(chunk => insertRows(chunk.toList))
+        _ <- ZIO.succeed(source.close())
+    }yield Response.text("Database initialized")
+
+    initLogic.catchAll(t => ZIO.succeed(Response.text(s"Error initializing database: ${t.getMessage}")))
+  }
+
   import HomeTeams.*
   import AwayTeams.*
 
-  val insertRows: ZIO[ZConnectionPool, Throwable, UpdateResult] = {
+  def insertRows(games: List[Game]): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)".values[Game.Row](rows)
-      )
-    }
-  }
-
-  // Should be implemented to replace the `val insertRows` example above. Replace `Any` by the proper case class.
-  def insertRows2(games: Game): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
-    val rows: List[Game.Row] = List(games.toRow)
-     transaction {
-      insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)".values[Game.Row](rows)
+        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre)".values[Game.Row](rows)
       )
     }
   }
@@ -146,8 +203,42 @@ object DataService {
   def latest(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
     transaction {
       selectOne(
-        sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1".as[Game]
+        sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1".as[Game]
       )
+    }
+  }
+
+  def getEloRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    transaction {
+        for {
+        homeElo <- selectOne(sql"SELECT elo1_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        awayElo <- selectOne(sql"SELECT elo2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        } yield (homeElo, awayElo)
+    }
+  }
+
+  def getMlbRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+    transaction {
+        for {
+        homeElo <- selectOne(sql"SELECT rating1_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        awayElo <- selectOne(sql"SELECT rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)}".as[Double]).map(_.getOrElse(1500.0))
+        } yield (homeElo, awayElo)
+    }
+  }
+
+  def season(year: SeasonYear): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+        selectAll(
+            sql"SELECT date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE season_year = ${SeasonYear.unapply(year)} ORDER BY date LIMIT 20".as[Game]
+        ).map(_.toList)
+    }
+  }
+
+  def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+      selectAll(
+        sql"SELECT  date, season_year, playoff_round, home_team, away_team, elo1_pre, elo2_pre, rating1_pre, rating2_pre FROM games WHERE home_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 20".as[Game]
+      ).map(_.toList)
     }
   }
 }
