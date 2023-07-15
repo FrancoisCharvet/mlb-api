@@ -59,7 +59,7 @@ DataService which contains everything related to the database => Initialization,
 
 /game/latest/homeTeam/awayTeam => To get the last game between two teams
 
-/game/predict/homeTeam/awayTeam => To predict the probability of winning using ELO and MB rating systems
+/game/predict/homeTeam/awayTeam => To predict the probability of winning using ELO and MLB rating systems
 
 /games/count => To get the total of games from the database
 
