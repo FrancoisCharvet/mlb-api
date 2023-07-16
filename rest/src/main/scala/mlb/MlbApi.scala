@@ -25,7 +25,8 @@ object MlbApi extends ZIOAppDefault {
     case Method.GET -> Root / "text" => Response.text("Hello MLB Fans!")
     case Method.GET -> Root / "json" => Response.json("""{"greetings": "Hello MLB Fans!"}""")
   }.withDefaultErrorResponse
-
+  
+  // Contains each endpoints and the call to multiple functions
   val endpoints: App[ZConnectionPool] = Http.collectZIO[Request] {
     case Method.GET -> Root / "init" => init
     case Method.GET -> Root / "game" / "latest" / homeTeam / awayTeam =>
@@ -34,7 +35,9 @@ object MlbApi extends ZIOAppDefault {
         res: Response = latestGameResponse(game)
       } yield res
    case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-    predictNextMatch(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { (eloPrediction,mlbPrediction) =>
+    //We use the flatMap to combine ZIO effect of predictNextGame and predictResponse
+    //So we can get eloPrediction and mlbPrediction values and pass them to predictResponse
+    predictNextGame(HomeTeam(homeTeam), AwayTeam(awayTeam)).flatMap { (eloPrediction,mlbPrediction) =>
         predictResponse(HomeTeam(homeTeam), AwayTeam(awayTeam), eloPrediction, mlbPrediction).map { response =>
         response
         }
@@ -71,18 +74,20 @@ object MlbApi extends ZIOAppDefault {
     appLogic.provide(createZIOPoolConfig >>> connectionPool, Server.default)
 }
 
+// Contains functions which handle responses
 object ApiService {
 
   import zio.json.EncoderOps
   import Game._
   
-
+  //Build response for the total number of games stored in the database
   def countResponse(count: Option[Int]): Response = {
     count match
       case Some(c) => Response.text(s"$c game(s) in historical data").withStatus(Status.Ok)
       case None => Response.text("No game in historical data").withStatus(Status.NotFound)
   }
 
+  //Build the response for the lastGame between two teams
   def latestGameResponse(game: Option[Game]): Response = {
     println(game)
     game match
@@ -90,7 +95,8 @@ object ApiService {
       case None => Response.text("No game found in historical data").withStatus(Status.NotFound)
   }
 
-  def predictNextMatch(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
+  //Function to predict probabilities for the next match (ELO & MLB)
+  def predictNextGame(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
     for {
         eloRatings <- getEloRatings(homeTeam, awayTeam)
         mlbRatings <- getMlbRatings(homeTeam, awayTeam)
@@ -100,7 +106,7 @@ object ApiService {
 
         val eloDifference = homeElo - awayElo
         val mlbDifference = homeMlb - awayMlb
-
+        
         val winProbabilityElo = 1.0 / (1.0 + math.pow(10.0, eloDifference / 400.0))
         val winProbabilityMlb = 1.0 / (1.0 + math.pow(10.0, mlbDifference / 400.0))
 
@@ -108,8 +114,10 @@ object ApiService {
     }
   }
 
+  //Build the response for the next game's prediction
   def predictResponse(homeTeam: HomeTeam, awayTeam: AwayTeam, eloPrediction: Double, mlbPrediction: Double): ZIO[ZConnectionPool, Throwable, Response] = {
-    predictNextMatch(homeTeam, awayTeam).flatMap {
+    //We use flatMap to get eloPrediction and mlbPrediction values
+    predictNextGame(homeTeam, awayTeam).flatMap {
         case (eloPrediction,mlbPrediction) if eloPrediction >= 0 && mlbPrediction >= 0 =>
         ZIO.succeed(Response.text(s"${homeTeam} has ${eloPrediction * 100} % probability to win according to ELO.\n${homeTeam} has ${mlbPrediction * 100} % probability to win according to MLB.").withStatus(Status.Ok))
         case _ =>
@@ -118,14 +126,15 @@ object ApiService {
 
   }
 
-
+  //Build the game history response
   def gamesHistoryResponse(games: List[Game]): Response = {
     games match
       case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
       case _ => Response.json(games.toJson).withStatus(Status.Ok)
   }
 
-    def gamesSeasonResponse(games: List[Game]): Response = {
+  //Build the response which shows all games for a specific season
+  def gamesSeasonResponse(games: List[Game]): Response = {
     games match
       case Nil => Response.text("No games found in historical data").withStatus(Status.NotFound)
       case _ => Response.json(games.toJson).withStatus(Status.Ok)
@@ -133,6 +142,7 @@ object ApiService {
 
 }
 
+//Contains functions which handle database management
 object DataService {
 
   val createZIOPoolConfig: ULayer[ZConnectionPoolConfig] =
@@ -155,6 +165,8 @@ object DataService {
     )
   }
 
+  //Initialization of the database using CSVReader from tototoshi/scala-csv
+  //And map to a Game object
   def init: ZIO[ZConnectionPool, Throwable, Response] = {
     val initLogic = for{
         conn <- create
@@ -185,6 +197,7 @@ object DataService {
   import HomeTeams.*
   import AwayTeams.*
 
+  //Insert data inside games table
   def insertRows(games: List[Game]): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
@@ -194,12 +207,14 @@ object DataService {
     }
   }
 
+  //Select every games stored
   val count: ZIO[ZConnectionPool, Throwable, Option[Int]] = transaction {
     selectOne(
       sql"SELECT COUNT(*) FROM games".as[Int]
     )
   }
 
+  //Retrieve the last game between two teams
   def latest(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
     transaction {
       selectOne(
@@ -208,6 +223,7 @@ object DataService {
     }
   }
 
+  //Retrieve ELO predictions
   def getEloRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
     transaction {
         for {
@@ -217,6 +233,7 @@ object DataService {
     }
   }
 
+  //Retrieve MLB predictions
   def getMlbRatings(homeTeam: HomeTeam, awayTeam: AwayTeam): ZIO[ZConnectionPool, Throwable, (Double, Double)] = {
     transaction {
         for {
@@ -226,6 +243,7 @@ object DataService {
     }
   }
 
+  //Retrieve games from a specific season
   def season(year: SeasonYear): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
         selectAll(
@@ -234,6 +252,7 @@ object DataService {
     }
   }
 
+  //Retrieve every games of a specific team
   def history(homeTeam: HomeTeam): ZIO[ZConnectionPool, Throwable, List[Game]] = {
     transaction {
       selectAll(

@@ -5,6 +5,7 @@ import zio.jdbc._
 
 import java.time.LocalDate
 
+//Object to map values from homeTeams column
 object HomeTeams {
 
   opaque type HomeTeam = String
@@ -21,6 +22,7 @@ object HomeTeams {
   implicit val homeTeamDecoder: JsonDecoder[HomeTeam] = JsonDecoder.string
 }
 
+//Object to map values from ELO prediction column 1
 object EloPres1{
   opaque type EloPre1 = Double
 
@@ -36,7 +38,7 @@ object EloPres1{
   implicit val eloPre1Decoder: JsonDecoder[EloPre1] = JsonDecoder.double
 }
 
-
+//Object to map values from ELO column 2
 object EloPres2{
   opaque type EloPre2 = Double
   object EloPre2 {
@@ -51,7 +53,7 @@ object EloPres2{
   implicit val eloPre2Decoder: JsonDecoder[EloPre2] = JsonDecoder.double
 }
 
-
+//Object to map values from MLB column1
 object MlbPres1{
   opaque type MlbPre1 = Double
   object MlbPre1 {
@@ -66,6 +68,7 @@ object MlbPres1{
   implicit val mlbPre1Decoder: JsonDecoder[MlbPre1] = JsonDecoder.double
 }
 
+//Object to map values from MLB column 2
 object MlbPres2{
   opaque type MlbPre2 = Double
   object MlbPre2 {
@@ -79,6 +82,8 @@ object MlbPres2{
   implicit val mlbPre2Encoder: JsonEncoder[MlbPre2] = JsonEncoder.double
   implicit val mlbPre2Decoder: JsonDecoder[MlbPre2] = JsonDecoder.double
 }
+
+//Object to map values from AwayTeams column
 object AwayTeams {
 
   opaque type AwayTeam = String
@@ -95,6 +100,7 @@ object AwayTeams {
   implicit val awayTeamDecoder: JsonDecoder[AwayTeam] = JsonDecoder.string
 }
 
+//Object to map values from dates column
 object GameDates {
 
   opaque type GameDate = LocalDate
@@ -111,6 +117,7 @@ object GameDates {
   implicit val gameDateDecoder: JsonDecoder[GameDate] = JsonDecoder.localDate
 }
 
+//Object to map values from season column
 object SeasonYears {
 
   opaque type SeasonYear <: Int = Int
@@ -130,6 +137,7 @@ object SeasonYears {
   implicit val seasonYearDecoder: JsonDecoder[SeasonYear] = JsonDecoder.int
 }
 
+//Object to map values from playoff column
 object PlayoffRounds {
 
   opaque type PlayoffRound <: Int = Int
@@ -160,6 +168,7 @@ import EloPres2.*
 import MlbPres1.*
 import MlbPres2.*
 
+//Case class which represents a Game with all of its attributes
 final case class Game(
                        date: GameDate,
                        season: SeasonYear,
