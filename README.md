@@ -32,11 +32,11 @@ The dataset includes two ratings systems, ELO and MLB Predictions, which are use
 2. **MLB Predictions**: The MLB Predictions rating system utilizes various statistical models and algorithms to predict game outcomes. It takes into account factors such as team performance, player statistics, historical data, and other relevant factors to generate predictions for upcoming games.
 
 ## Getting Started
-Follow these steps to run the Sudoku solver:
+Follow these steps to run the MlbApi:
 
 Clone the Git repository: git clone <repository-url>
 
-Change into the project directory: cd sudokusolver
+Change into the project directory: cd mlb-api
 
 Build the project: sbt compile
 
