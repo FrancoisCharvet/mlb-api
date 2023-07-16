@@ -9,7 +9,7 @@ François CHARVET
 Stanley DELLON
 
 ## Requirements
-To run the Sudoku solver, you will need the following:
+To run the MlbApi, you will need the following:
 
 Scala 3.3.0
 
